@@ -1,0 +1,166 @@
+# Importing necessary libraries
+import pandas as pd
+import re
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import LabelEncoder
+from imblearn.over_sampling import SMOTE
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.ensemble import VotingClassifier
+from sklearn.metrics import accuracy_score, classification_report
+
+
+# Download nltk resources
+nltk.download('stopwords')
+nltk.download('wordnet')
+
+#Load the dataset
+tweets_df = pd.read_csv('Tweets.csv')
+
+tweets_df.head(5)
+
+import matplotlib.pyplot as plt
+
+
+negative_reasons = tweets_df[tweets_df['airline_sentiment'] == 'negative']['negativereason'].value_counts()
+
+plt.figure(figsize=(10, 6))
+negative_reasons.plot(kind='barh')
+plt.title('Distribution of Negative Reasons')
+plt.xlabel('Tweet Count')
+_ = plt.ylabel('Negative Reason')
+
+tweets_df = tweets_df[['airline_sentiment', 'text']].dropna()  # Keep relevant columns and drop missing values
+
+#dimension of dataset
+tweets_df.shape
+
+#info of dataset
+tweets_df.info()
+
+#printing dataset values
+tweets_df.head(10)
+
+# @title Distribution of Airline Sentiment
+
+import matplotlib.pyplot as plt
+
+# Assuming your data is in a pandas DataFrame called 'tweets_df'
+
+sentiment_counts = tweets_df['airline_sentiment'].value_counts()
+
+plt.figure(figsize=(8, 8))
+plt.pie(sentiment_counts, labels=sentiment_counts.index, autopct='%1.1f%%', startangle=90)
+_ = plt.title('Distribution of Airline Sentiment')
+
+# @title airline_sentiment
+
+from matplotlib import pyplot as plt
+import seaborn as sns
+tweets_df.groupby('airline_sentiment').size().plot(kind='barh', color=sns.palettes.mpl_palette('Dark2'))
+plt.gca().spines[['top', 'right',]].set_visible(False)
+
+#Text Cleaning and Preprocessing
+stop_words = set(stopwords.words('english'))
+lemmatizer = WordNetLemmatizer()
+
+# Preprocessing of the text
+def preprocess_text(text):
+    text = re.sub(r'@\w+|https?://\S+|[^a-zA-Z\s]', '', text)  # Remove mentions, URLs, and special characters
+    text = text.lower()  # Convert to lowercase
+    words = [lemmatizer.lemmatize(word) for word in text.split() if word not in stop_words]
+    return ' '.join(words)
+# Apply text preprocessing
+tweets_df['cleaned_text'] = tweets_df['text'].apply(preprocess_text)
+
+# Label Encoding
+label_encoder = LabelEncoder()
+tweets_df['sentiment_label'] = label_encoder.fit_transform(tweets_df['airline_sentiment'])
+
+# TF-IDF Vectorization
+tfidf_vectorizer = TfidfVectorizer(ngram_range=(1, 3), max_features=5000)
+X = tfidf_vectorizer.fit_transform(tweets_df['cleaned_text'])
+y = tweets_df['sentiment_label']
+
+# Handling Class Imbalance with SMOTE
+smote = SMOTE(random_state=42)
+X_resampled, y_resampled = smote.fit_resample(X, y)
+
+# Split the data into training and test sets
+X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
+
+
+# Define parameter grids for each model
+nb_params = {'alpha': [0.1, 0.5, 1.0, 1.5]}
+lr_params = {'C': [0.1, 1.0, 10, 50], 'max_iter': [100, 200, 300,500,1000]}
+
+# GridSearchCV
+nb_grid = GridSearchCV(MultinomialNB(), nb_params, cv=5)
+nb_grid.fit(X_train, y_train)
+
+#accuracy
+print("\nNaive Bayes Best Model Accuracy:", accuracy_score(y_test, nb_grid.best_estimator_.predict(X_test)))
+
+lr_grid = GridSearchCV(LogisticRegression(solver='liblinear', random_state=42), lr_params, cv=5)
+lr_grid.fit(X_train, y_train)
+
+print("\nLogistic Regression Best Model Accuracy:", accuracy_score(y_test, lr_grid.best_estimator_.predict(X_test)))
+
+# Voting Classifier for Ensemble
+voting_clf = VotingClassifier(estimators=[
+    ('nb', nb_grid.best_estimator_),
+    ('lr', lr_grid.best_estimator_),
+
+], voting='soft')
+
+# Fit the Voting Classifier
+voting_clf.fit(X_train, y_train)
+
+# Model Evaluation
+# Predict and evaluate with the Voting Classifier
+y_pred_voting = voting_clf.predict(X_test)
+voting_accuracy = accuracy_score(y_test, y_pred_voting)
+voting_report = classification_report(y_test, y_pred_voting, target_names=label_encoder.classes_)
+
+# Print the results
+print("Voting Classifier Model Accuracy:", voting_accuracy)
+print("Voting Classifier Model Report:\n", voting_report)
+
+
+import matplotlib.pyplot as plt
+
+# Calculate accuracies
+nb_accuracy = accuracy_score(y_test, nb_grid.best_estimator_.predict(X_test))
+lr_accuracy = accuracy_score(y_test, lr_grid.best_estimator_.predict(X_test))
+voting_accuracy = accuracy_score(y_test, y_pred_voting)
+
+# Model names and corresponding accuracies
+models = ['Naive Bayes', 'Logistic Regression', 'Voting Classifier']
+accuracies = [nb_accuracy, lr_accuracy, voting_accuracy]
+
+# Create a bar graph
+plt.figure(figsize=(10, 6))
+plt.bar(models, accuracies, color=['blue', 'green', 'red'])
+plt.xlabel('Models')
+plt.ylabel('Accuracy')
+plt.title('Accuracy Comparison of Different Models')
+plt.ylim(0, 1)  # Set y-axis limit to 0-1 for accuracy
+plt.show()
+
+text_input = "that flight was good"
+clean_text_input = preprocess_text(text_input)
+text_input_vectorized = tfidf_vectorizer.transform([clean_text_input])
+
+def predict_sentiment(text):
+    clean_text = preprocess_text(text)
+    text_vectorized = tfidf_vectorizer.transform([clean_text])
+
+sentiment_label = voting_clf.predict(text_input_vectorized)[0]
+sentiment_class = label_encoder.inverse_transform([sentiment_label])[0]
+
+print("Sentiment Class:", sentiment_class)
